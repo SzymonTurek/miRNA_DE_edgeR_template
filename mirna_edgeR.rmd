@@ -51,7 +51,9 @@ raw_counts_named <- raw_counts_filtered[, !names(raw_counts_filtered) %in% c("Co
                                            
 rownames(raw_counts_named) <- as.vector(raw_counts_filtered$known_miRNAs)
 
+raw_counts_named2 <- left_join(raw_counts_filtered, results_Y, by="known_miRNAs")
 
+write.csv(raw_counts_named2, file.path(getwd(),"results/raw_counts_named_sequences.csv"))
 
 
 write.csv(raw_counts_filtered, file.path(getwd(),"results/counts_filtered.csv"))
