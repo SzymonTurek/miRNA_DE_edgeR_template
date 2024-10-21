@@ -7,6 +7,9 @@ library("edgeR")
 library(Glimma)
 library(dplyr)
 library("data.table")
+library(DESeq2)
+library(ggplot2)
+library("glmpca")
 
 ```
 
@@ -18,14 +21,21 @@ Wczytanie plików
 getwd()
 dir.create(file.path(getwd(), "results"))
 
-coldata <- read_excel(file.path(getwd(),"input_data/coldata_all.xlsx"))
-coldata$names <- coldata$`Line & organ`
+#coldata <- read_excel(file.path(getwd(),"input_data/coldata_all.xlsx"))
+coldata <- read.table(file.path(getwd(),"input_data/coldata.csv"), header = TRUE, sep=",")
+coldata$names <- coldata$Condition
 
 counts <- read.table(file.path(getwd(),"input_data/Counts_with_names.csv"), header = TRUE, sep=",")
 
 results <- read.table(file.path(getwd(),"input_data/Results.txt"), header=TRUE)
+results_Y <-  results %>% filter(MIRNA == "Y")
+results_Y$known_miRNAs <- ifelse(is.na(results_Y$known_miRNAs), results_Y$MajorRNA, results_Y$known_miRNAs)
+results_Y$known_miRNAs <- ave(as.character(results_Y$known_miRNAs), results_Y$known_miRNAs, FUN=function(x) if (length(x) > 1) paste0( x[1], '(', seq_along(x), ')') else x[1])
+results_Y_short <- results_Y[,c("Locus", "Strand", "MajorRNA", "known_miRNAs")]
 
 results <- results[,c("Name", "known_miRNAs"  , "MajorRNA")]
+
+
 raw_counts <- left_join(counts, results, by = "Name")
 
  
@@ -34,10 +44,10 @@ raw_counts_filtered$known_miRNAs <- ifelse(is.na(raw_counts_filtered$known_miRNA
 
 raw_counts_filtered$known_miRNAs <- ave(as.character(raw_counts_filtered$known_miRNAs), raw_counts_filtered$known_miRNAs, FUN=function(x) if (length(x)>1) paste0(x[1], '(', seq_along(x), ')') else x[1])
 
+raw_counts_named <- raw_counts_filtered[, !names(raw_counts_filtered) %in% c("Coords","Name", "MIRNA", "known_miRNAs", "MajorRNA")]
+#raw_counts_named <- raw_counts_filtered[,c("Hgy3_apex_rep1","Hgy3_apex_rep2","Hgy3_apex_rep3", "Hgy3_1_2_rep1", "Hgy3_1_2_rep2","Hgy3_1_2_rep3", "Hgy3_3.5_rep1", "Hgy3_3.5_rep2", "Hgy3_3.5_rep3", "Hgy3_6_8_rep1", "Hgy3_6_8_rep2", "Hgy3_6_8_rep3", "Hgy3_L_rep1", "Hgy3_L_rep2", "Hgy3_L_rep3")]
 
-raw_counts_named <- raw_counts_filtered[,c("Hgy3_apex_rep1","Hgy3_apex_rep2","Hgy3_apex_rep3", "Hgy3_1_2_rep1", "Hgy3_1_2_rep2","Hgy3_1_2_rep3", "Hgy3_3.5_rep1", "Hgy3_3.5_rep2", "Hgy3_3.5_rep3", "Hgy3_6_8_rep1", "Hgy3_6_8_rep2", "Hgy3_6_8_rep3", "Hgy3_L_rep1", "Hgy3_L_rep2", "Hgy3_L_rep3")]
-
-colnames(raw_counts_named) <- c("Hgy3_apex_rep1","Hgy3_apex_rep2","Hgy3_apex_rep3", "Hgy3_1_2_rep1", "Hgy3_1_2_rep2","Hgy3_1_2_rep3", "Hgy3_3_5_rep1", "Hgy3_3_5_rep2", "Hgy3_3_5_rep3", "Hgy3_6_8_rep1", "Hgy3_6_8_rep2", "Hgy3_6_8_rep3", "Hgy3_L_rep1", "Hgy3_L_rep2", "Hgy3_L_rep3")
+#colnames(raw_counts_named) <- c("Hgy3_apex_rep1","Hgy3_apex_rep2","Hgy3_apex_rep3", "Hgy3_1_2_rep1", "Hgy3_1_2_rep2","Hgy3_1_2_rep3", "Hgy3_3_5_rep1", "Hgy3_3_5_rep2", "Hgy3_3_5_rep3", "Hgy3_6_8_rep1", "Hgy3_6_8_rep2", "Hgy3_6_8_rep3", "Hgy3_L_rep1", "Hgy3_L_rep2", "Hgy3_L_rep3")
                                            
 rownames(raw_counts_named) <- as.vector(raw_counts_filtered$known_miRNAs)
 
@@ -60,7 +70,7 @@ row_names <- rownames(raw_counts_named)
 Ustalenie Group do design
 ```{r, error=TRUE, results='hide', message=FALSE}
 #Group <- factor(paste(coldata$sex_type_of_plant,coldata$sex_type_of_flower,coldata$Line ,sep="."))
-Group <- factor(coldata$`Line & organ`)
+Group <- factor(coldata$Condition)
 ```
 
 
@@ -159,11 +169,13 @@ plotMDS(y, col=colors[Group], pch=pch[Group])
 
 ```{r, error=TRUE}
 
-glMDSPlot(y, labels=paste(coldata$"...9" ), 
-          groups=coldata$`Line & organ`, launch=TRUE)
+glMDSPlot(y, labels=paste(coldata$Sample_name ), 
+          groups=coldata$Condition, launch=TRUE)
 
-glimmaMDS(y, labels=paste(coldata$"...9" ), 
-          groups=coldata$`Line & organ`, launch=TRUE, html=file.path(getwd(),"results/MDS_plot.html"))
+glimmaMDS(y, labels=paste(coldata$Sample_name ), 
+          groups=coldata$Condition, launch=TRUE, html=file.path(getwd(),"results/MDS_plot.html"))
+unlink(paste0(getwd(),"/results/", "MDS_plot_files"), recursive = TRUE)
+
 ```
 
 
@@ -180,8 +192,7 @@ for (i in 1:ncol(y)){
 Utworzenie kontrastów:
 ```{r, error=TRUE, results='hide', message=FALSE}
 
-#Utworzenie macierzy kontrastów:
-
+#Utworzenie macierzy kontrastów: Grupa_badawcza vs kontrola
 
 my.contrasts <- makeContrasts(
   Line_Hgy3_1_2vsLine_Hgy3_apex = GroupHgy3_1_2 - GroupHgy3_apex ,
@@ -213,10 +224,18 @@ qlf_test <- function(con, contr_name) {
   dir.create( paste0(getwd(),"/results/results_",contr_name), showWarnings = TRUE)
   dir.create(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), showWarnings = FALSE)
   qlf <- glmQLFTest(fit, contrast=con,)
-  res_qlf <- as.data.frame(qlf)[1:100,]
+  res_qlf <- as.data.frame(qlf)
+  res_qlf$miRNA <- rownames(res_qlf)
+  #colnames(res_qlf) <- c("logFC", "logCPM", "F", "PValue", "FDR")
+  colnames(results_Y_short)[colnames(results_Y_short) == "known_miRNAs"] <- "miRNA"
+  res_qlf <- left_join(res_qlf, results_Y_short, by="miRNA")
+  res_qlf <- res_qlf[,c("miRNA", "Locus", "Strand", "MajorRNA", "logFC", "logCPM", "F", "PValue")]
   write.csv(res_qlf, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "res_qlf.csv"))
   
-  top_tags <- as.data.frame(topTags(qlf, n=100))
+  top_tags <- as.data.frame(topTags(qlf))
+  top_tags$miRNA <- rownames(top_tags)
+  top_tags <- left_join(top_tags, results_Y_short, by="miRNA")
+  top_tags <- top_tags[,c("miRNA", "Locus", "Strand", "MajorRNA", "logFC", "logCPM", "F", "PValue")]
   write.csv(top_tags, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "qlf_topDEgenes.csv"))
   
   is.de <- decideTests(qlf)
@@ -330,6 +349,50 @@ DE_analyse <- function(con, contr_name, y){
 ```
 
 
+
+```{r}
+
+  dds_to_pca <- DESeq2::DESeqDataSetFromMatrix(countData=raw_counts_named, colData=coldata, design=~Condition)
+  vsd <- rlog(dds_to_pca)
+  keep <- filterByExpr(dds_to_pca, group=Group)
+ # keep <- rowSums(counts(dds_to_pca)) >= 3
+  dds_to_pca <- dds_to_pca[keep,]
+
+
+  pcaData <- plotPCA(vsd, intgroup = c( "Condition"), returnData = TRUE)#zmienić tutaj
+  pcaData
+  percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+  pca_plot1 <- ggplot(pcaData, aes(x = PC1, y = PC2, color = Condition)) +#i tutaj zmienić kolor
+    geom_point(size =3) +
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+    coord_fixed() +
+    ggtitle("PCA with rlog data")
+
+  ggsave(paste0(getwd(),"/results/", "PCA_plot_all_samples.jpg"), pca_plot1, width = 10, height = 10, units = "cm", dpi = 300,)
+  ggsave(paste0(getwd(),"/results/",  "/PCA_plot.pdf"), pca_plot1, width = 10, height = 10, units = "cm", device = "pdf")
+
+
+
+
+  gpca <- glmpca(counts(dds_to_pca), L=2)
+  gpca.dat <- gpca$factors
+  gpca.dat$name <- dds_to_pca$name
+  gpca.dat$condition <- dds_to_pca$condition
+  pca_plot2 <- ggplot(gpca.dat, aes(x = dim1, y = dim2, color = vsd$Sample_name, shape = vsd$Condition)) +
+    geom_point(size =3) + coord_fixed() + ggtitle("glmpca - Generalized PCA")
+
+  ggsave(paste0(getwd(),"/results/", "/PCA_plot_all_samples_glmpca.jpg"), pca_plot2)
+  ggsave(paste0(getwd(),"/results/",  "/PCA_plot_glmpca.pdf"), pca_plot2, width = 20, height = 20, units = "cm", device = "pdf")
+
+
+
+
+
+
+```
 
 
 
