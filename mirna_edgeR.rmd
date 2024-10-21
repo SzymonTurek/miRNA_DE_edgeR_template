@@ -1,0 +1,353 @@
+```{r, error=TRUE, results='hide', message=FALSE}
+#BiocManager::install("edgeR")
+#BiocManager::install("Glimma")
+
+library(readxl)
+library("edgeR")
+library(Glimma)
+library(dplyr)
+library("data.table")
+
+```
+
+
+
+
+Wczytanie plików
+```{r, error=TRUE, results='hide', message=FALSE}
+getwd()
+dir.create(file.path(getwd(), "results"))
+
+coldata <- read_excel(file.path(getwd(),"input_data/coldata_all.xlsx"))
+coldata$names <- coldata$`Line & organ`
+
+counts <- read.table(file.path(getwd(),"input_data/Counts_with_names.csv"), header = TRUE, sep=",")
+
+results <- read.table(file.path(getwd(),"input_data/Results.txt"), header=TRUE)
+
+results <- results[,c("Name", "known_miRNAs"  , "MajorRNA")]
+raw_counts <- left_join(counts, results, by = "Name")
+
+ 
+raw_counts_filtered <- raw_counts %>% filter(MIRNA == "Y")
+raw_counts_filtered$known_miRNAs <- ifelse(is.na(raw_counts_filtered$known_miRNAs), raw_counts_filtered$MajorRNA, raw_counts_filtered$known_miRNAs)
+
+raw_counts_filtered$known_miRNAs <- ave(as.character(raw_counts_filtered$known_miRNAs), raw_counts_filtered$known_miRNAs, FUN=function(x) if (length(x)>1) paste0(x[1], '(', seq_along(x), ')') else x[1])
+
+
+raw_counts_named <- raw_counts_filtered[,c("Hgy3_apex_rep1","Hgy3_apex_rep2","Hgy3_apex_rep3", "Hgy3_1_2_rep1", "Hgy3_1_2_rep2","Hgy3_1_2_rep3", "Hgy3_3.5_rep1", "Hgy3_3.5_rep2", "Hgy3_3.5_rep3", "Hgy3_6_8_rep1", "Hgy3_6_8_rep2", "Hgy3_6_8_rep3", "Hgy3_L_rep1", "Hgy3_L_rep2", "Hgy3_L_rep3")]
+
+colnames(raw_counts_named) <- c("Hgy3_apex_rep1","Hgy3_apex_rep2","Hgy3_apex_rep3", "Hgy3_1_2_rep1", "Hgy3_1_2_rep2","Hgy3_1_2_rep3", "Hgy3_3_5_rep1", "Hgy3_3_5_rep2", "Hgy3_3_5_rep3", "Hgy3_6_8_rep1", "Hgy3_6_8_rep2", "Hgy3_6_8_rep3", "Hgy3_L_rep1", "Hgy3_L_rep2", "Hgy3_L_rep3")
+                                           
+rownames(raw_counts_named) <- as.vector(raw_counts_filtered$known_miRNAs)
+
+
+
+
+write.csv(file.path(getwd(),"results/counts_filtered.csv"))
+write.csv(file.path(getwd(),"results/counts_filtered_named.csv"))
+
+
+
+row_names <- rownames(raw_counts_named)
+
+
+```
+
+
+
+
+Ustalenie Group do design
+```{r, error=TRUE, results='hide', message=FALSE}
+#Group <- factor(paste(coldata$sex_type_of_plant,coldata$sex_type_of_flower,coldata$Line ,sep="."))
+Group <- factor(coldata$`Line & organ`)
+```
+
+
+Etap filtracji - filterByExpr - Filter genes by expression level. Determine which genes have sufficiently large counts to be retained in a statistical analysis.
+```{r, error=TRUE}
+
+
+y <- DGEList(raw_counts_named, group=Group)
+rownames(y) <- row_names
+
+
+
+
+keep <- filterByExpr(y, group=Group)
+
+y_filter <- y[keep, , keep.lib.sizes=FALSE]
+salmon.g.filtered  <- y[keep, keep.lib.sizes=FALSE]
+cat("Przed filtracją:", length(y$counts), "Po filtracji:", length(salmon.g.filtered$counts))
+
+```
+
+
+
+```{r, error=TRUE, results='hide', message=FALSE}
+
+dge <- DGEList(salmon.g.filtered, group = Group)
+dge <- calcNormFactors(dge)
+
+normalized.counts <- cpm(dge)
+log_normalized.counts <- cpm(dge, log=TRUE)
+
+write.csv(normalized.counts, file.path(getwd(),"results/CPM_counts.csv"))
+write.csv(log_normalized.counts, file.path(getwd(),"results/log_CPM_counts.csv"))
+
+```
+
+
+Exploring differences between libraries
+```{r, error=TRUE}
+
+pch <- c(0,1,2,15,16,17, 18, 19 , 20)
+colors <- rep(c("darkgreen", "red", "blue", "green", "orange"), 2)
+plotMDS(y, col=colors[Group], pch=pch[Group])
+legend("top", legend=levels(Group), pch=pch, col=colors, ncol=2)
+
+plotMDS(y, col=colors[Group], pch=pch[Group])
+
+```
+
+```{r, error=TRUE, results='hide', message=FALSE}
+ #mod1  <- model.matrix(~0+ condition, coldata)
+ mod1  <- model.matrix(~0+ Group)
+ design <- mod1
+```
+
+
+Wizualna inspekcja
+```{r, error=TRUE}
+
+y <- dge
+y <- estimateDisp(y,design, robust=TRUE)
+plotBCV(y)
+fit <- glmQLFit(y,design, robust=TRUE)
+head(fit$coefficients)
+plotQLDisp(fit)
+summary(fit$df.prior)
+```
+
+
+
+
+Exploring differences between libraries
+```{r, error=TRUE}
+
+pch <- c(0,1,2,15,16,17, 18, 19 , 20)
+colors <- rep(c("darkgreen", "red", "blue", "green", "orange"), 2)
+plotMDS(y, col=colors[Group], pch=pch[Group])
+legend("bottom", legend=levels(Group), pch=pch, col=colors, ncol=2)
+
+plotMDS(y, col=colors[Group], pch=pch[Group])
+
+```
+```{r, error=TRUE}
+jpeg(file=file.path(getwd(),"results/MDS_plot.jpg"))
+pch <- c(0,1,2,15,16,17, 18, 19 , 20)
+colors <- rep(c("darkgreen", "red", "blue", "green", "orange"), 2)
+plotMDS(y, col=colors[Group], pch=pch[Group])
+legend("bottom", legend=levels(Group), pch=pch, col=colors, ncol=2)
+dev.off()
+
+
+plotMDS(y, col=colors[Group], pch=pch[Group])
+
+```
+
+
+```{r, error=TRUE}
+
+glMDSPlot(y, labels=paste(coldata$"...9" ), 
+          groups=coldata$`Line & organ`, launch=TRUE)
+
+glimmaMDS(y, labels=paste(coldata$"...9" ), 
+          groups=coldata$`Line & organ`, launch=TRUE, html=file.path(getwd(),"results/MDS_plot.html"))
+```
+
+
+
+
+```{r, error=TRUE}
+for (i in 1:ncol(y)){
+  plotMD(y, column=i)
+  abline(h=0, col="red", lty=2, lwd=2)
+}
+
+```
+
+Utworzenie kontrastów:
+```{r, error=TRUE, results='hide', message=FALSE}
+
+#Utworzenie macierzy kontrastów:
+
+
+my.contrasts <- makeContrasts(
+  Line_Hgy3_1_2vsLine_Hgy3_apex = GroupHgy3_1_2 - GroupHgy3_apex ,
+  Line_Hgy3_3_5vsLine_Hgy3_1_2 = GroupHgy3_3_5 - GroupHgy3_1_2 ,
+  Line_Hgy3_6_8vsLine_Hgy3_3_5 = GroupHgy3_6_8 - GroupHgy3_3_5 ,
+  Line_Hgy3_1_2vsLine_Hgy3_L = GroupHgy3_1_2 - GroupHgy3_L ,
+  Line_Hgy3_3_5vsLine_Hgy3_L = GroupHgy3_3_5 - GroupHgy3_L ,
+  Line_Hgy3_6_8vsLine_Hgy3_L = GroupHgy3_6_8 - GroupHgy3_L 
+  
+  
+  
+  
+  
+  , levels = design 
+)
+
+contrasts_names <- c("Line_Hgy3_1_2vsLine_Hgy3_apex",  "Line_Hgy3_3_5vsLine_Hgy3_1_2", "Line_Hgy3_6_8vsLine_Hgy3_3_5", "Line_Hgy3_1_2vsLine_Hgy3_L" , "Line_Hgy3_3_5vsLine_Hgy3_L", "Line_Hgy3_6_8vsLine_Hgy3_L")
+
+
+
+
+```
+
+
+
+
+```{r, error=TRUE}
+qlf_test <- function(con, contr_name) {
+  dir.create( paste0(getwd(),"/results/results_",contr_name), showWarnings = TRUE)
+  dir.create(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), showWarnings = FALSE)
+  qlf <- glmQLFTest(fit, contrast=con,)
+  res_qlf <- as.data.frame(qlf)[1:100,]
+  write.csv(res_qlf, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "res_qlf.csv"))
+  
+  top_tags <- as.data.frame(topTags(qlf, n=100))
+  write.csv(top_tags, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "qlf_topDEgenes.csv"))
+  
+  is.de <- decideTests(qlf)
+  is.de05 <- decideTests(qlf, p.value=0.05)
+  
+  capture.output(summary(is.de), file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "qlf_isde.txt"))
+  capture.output(summary(is.de05), file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "qlf_isde05.txt"))
+
+  pdf(file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "MD_plot.pdf"))
+  plotMD(qlf, status=is.de)
+  dev.off()
+  return(qlf)
+}
+```
+
+
+```{r, error=TRUE}
+LRT_test <- function(con, contr_name){
+  dir.create(paste0(getwd(),"/results/results_",contr_name), showWarnings = FALSE)
+  dir.create(paste0(getwd(),"/results/results_",contr_name, "/lrt_test"), showWarnings = FALSE)
+  fit_LRT <- glmFit(y,design)
+  lrt <- glmLRT(fit_LRT,contrast=con)
+  res_lrt <- as.data.frame(lrt)[1:100,]
+  write.csv(res_lrt, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/lrt_test"), "res_lrt.csv"))
+  
+  top_tags <- as.data.frame(topTags(lrt, n=100))
+  write.csv(top_tags, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/lrt_test"), "lrt_topDEgenes.csv"))
+  
+  
+  o <- order(lrt$table$PValue)
+  capture.output(summary(de <- decideTests(lrt)), file = file.path(paste0(getwd(),"/results/results_",contr_name, "/lrt_test"), "lrt_isde.txt"))
+  print(summary(de <- decideTests(lrt)))
+  detags <- rownames(y)[as.logical(de)]
+  
+  pdf(file.path(paste0(getwd(),"/results/results_",contr_name, "/lrt_test"), "lrt_plot.pdf"))
+  plotSmear(lrt, de.tags=detags)
+  abline(h=c(-1, 1), col="blue")
+  dev.off()
+  return(lrt)
+}
+
+```
+
+
+```{r, error=TRUE} 
+#Differential expression above a fold-change threshold
+treat_test <- function(con, contr_name){
+  dir.create(paste0(getwd(),"/results/results_",contr_name), showWarnings = FALSE)
+  dir.create(paste0(getwd(),"/results/results_",contr_name, "/treat_test"), showWarnings = FALSE)
+  tr <- glmTreat(fit, contrast=con, lfc=log2(1.5))
+  res_tr <- as.data.frame(tr)[1:100,]
+  write.csv(res_tr, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/treat_test"), "res_treat.csv"))
+  
+  print(topTags(tr))
+  top_tags <- as.data.frame(topTags(tr, n=100))
+  write.csv(top_tags, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/treat_test"), "treat_topDEgenes.csv"))
+  
+  
+  is.de <- decideTests(tr)
+  capture.output(summary(is.de), file = file.path(paste0(getwd(),"/results/results_",contr_name, "/treat_test"), "treat_isde.txt"))
+  print(summary(is.de))
+  
+  pdf(file.path(paste0(getwd(),"/results/results_",contr_name, "/treat_test"), "MD_plot.pdf"))
+  plotMD(tr, status=is.de)
+  dev.off()
+  return(tr)
+  }
+
+```
+
+```{r, error=TRUE}
+#a heatmap to visualize the top 30 DE genes according to the test
+heat_map <- function(contr_name, y, st_test, folder_name){
+  dir.create(paste0(getwd(),"/results/results_",contr_name, "/", folder_name), showWarnings = FALSE)
+  logCPM <- cpm(y, prior.count=2, log=TRUE)
+  rownames(logCPM) <- rownames(y$counts)
+  colnames(logCPM) <- paste(y$samples$group, 1:3, sep="-")
+  o <- order(st_test$table$PValue)
+  logCPM <- logCPM[o[1:30],]
+  
+  pdf(file.path(paste0(getwd(),"/results/results_",contr_name,"/", folder_name), "heatmap.pdf"))
+  coolmap(logCPM, margins=c(7,7), lhei=c(1,6), lwid=c(1,3))
+  dev.off()
+}
+```
+
+
+
+Funkcja do analizy DE
+```{r, error=TRUE}
+DE_analyse <- function(con, contr_name, y){
+  
+  qlf <- qlf_test(con, contr_name)
+  try(lrt <- LRT_test(con, contr_name))
+  tr <- treat_test(con, contr_name)
+# 
+  
+  glimmaVolcano(qlf, group=y$samples$group,  counts = y$counts, html = paste0(getwd(),"/results/results_", contr_name, "/", contr_name, "_volcano.html"), main = paste0(contr_name, "_Volcano_plot") )
+
+  glimmaMA(qlf, group=y$samples$group,  counts = y$counts, html =  paste0(getwd(),"/results/results_", contr_name, "/", contr_name, "_MA_plot.html"), main = paste0(contr_name, "_MA_plot" ))
+  unlink(paste0(getwd(),"/results/results_", contr_name, "/", contr_name, "_MA_plot_files"), recursive = TRUE)
+  unlink(paste0(getwd(),"/results/results_", contr_name, "/", contr_name, "_volcano_files"), recursive = TRUE)
+  
+  
+  heat_map(contr_name, y,  tr, "treat_test")
+  heat_map(contr_name, y,  qlf, "qlf_test")
+  heat_map(contr_name, y,  lrt, "lrt_test")
+
+}
+
+```
+
+
+
+
+
+Pętla porównująca kontrasty DE
+```{r, error=TRUE}
+for (i in 1:length(contrasts_names)){
+#for (i in 1:3){
+  print(i)
+  con <- my.contrasts[,contrasts_names[i]]
+  DE_analyse(con, contrasts_names[i], y)
+  
+}
+
+```
+
+
+```{r}
+
+
+
+```
