@@ -54,8 +54,8 @@ rownames(raw_counts_named) <- as.vector(raw_counts_filtered$known_miRNAs)
 
 
 
-write.csv(file.path(getwd(),"results/counts_filtered.csv"))
-write.csv(file.path(getwd(),"results/counts_filtered_named.csv"))
+write.csv(raw_counts_filtered, file.path(getwd(),"results/counts_filtered.csv"))
+write.csv(raw_counts_named, file.path(getwd(),"results/counts_filtered_named.csv"))
 
 
 
@@ -232,7 +232,7 @@ qlf_test <- function(con, contr_name) {
   res_qlf <- res_qlf[,c("miRNA", "Locus", "Strand", "MajorRNA", "logFC", "logCPM", "F", "PValue")]
   write.csv(res_qlf, file = file.path(paste0(getwd(),"/results/results_",contr_name, "/qlf_test"), "res_qlf.csv"))
   
-  top_tags <- as.data.frame(topTags(qlf))
+  top_tags <- as.data.frame(topTags(qlf , n=nrow(res_qlf)))
   top_tags$miRNA <- rownames(top_tags)
   top_tags <- left_join(top_tags, results_Y_short, by="miRNA")
   top_tags <- top_tags[,c("miRNA", "Locus", "Strand", "MajorRNA", "logFC", "logCPM", "F", "PValue", "FDR")]
